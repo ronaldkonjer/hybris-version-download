@@ -2,40 +2,91 @@ pipeline {
     agent {
       label "jenkins-gradle"
     }
-    parameters {
-        string(name: 'VERSION', defaultValue: '6.7.0.1', description: 'Which platform version is this?')
-        string(name: 'DOWNLOADURL', defaultValue: 'NONE', description: 'Which platform version is this?')
-        string(name: 'HASH', defaultValue: 'NONE', description: 'expected md5 hash (Available in support portal, Related Info -> Content Info)')
-    }
     environment {
-        SUSER       = credentials('support-portal-user')
-        NEXUS = credentials('nexus')
+      ORG               = 'mpern'
+      APP_NAME          = 'hybris-version-download'
+      CHARTMUSEUM_CREDS = credentials('jenkins-x-chartmuseum')
     }
     stages {
-      stage("download & publish release") {
-          when {
-              expression { params.DOWNLOADURL && params.DOWNLOADURL != 'NONE' }
-          }
+      stage('CI Build and push snapshot') {
+        when {
+          branch 'PR-*'
+        }
+        environment {
+          PREVIEW_VERSION = "0.0.0-SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER"
+          PREVIEW_NAMESPACE = "$APP_NAME-$BRANCH_NAME".toLowerCase()
+          HELM_RELEASE = "$PREVIEW_NAMESPACE".toLowerCase()
+        }
         steps {
           container('gradle') {
-            sh """
-            gradle downloadCommerce publishMavenPublicationToMavenRepository \
-              -PhybrisVersion="${params.VERSION}" \
-              -PdownloadUrl="${params.DOWNLOADURL}" \
-              -PexpectedHash="${params.HASH}" \
-              -PsupportUser="\$SUSER_USR" \
-              -PsupportPassword="\$SUSER_PSW" \
-              -PnexusURL="http://\$NEXUS_SERVICE_HOST:\$NEXUS_SERVICE_PORT/repository/maven-releases" \
-              -PnexusUser="\$NEXUS_USR" \
-              -PnexusPassword="\$NEXUS_PSW"
-            """
+            // TODO 
+            //sh "mvn versions:set -DnewVersion=$PREVIEW_VERSION"
+            sh "gradle clean build"
+            sh 'export VERSION=$PREVIEW_VERSION && skaffold run -f skaffold.yaml'
+            sh "jx step validate --min-jx-version 1.2.36"
+            sh "jx step post build --image \$JENKINS_X_DOCKER_REGISTRY_SERVICE_HOST:\$JENKINS_X_DOCKER_REGISTRY_SERVICE_PORT/$ORG/$APP_NAME:$PREVIEW_VERSION"
+          }
+
+          dir ('./charts/preview') {
+           container('gradle') {
+             sh "make preview"
+             sh "jx preview --app $APP_NAME --dir ../.."
+           }
+          }
+        }
+      }
+      stage('Build Release') {
+        when {
+          branch 'master'
+        }
+        steps {
+          container('gradle') {
+            // ensure we're not on a detached head
+            sh "git checkout master"
+            sh "git config --global credential.helper store"
+            sh "jx step validate --min-jx-version 1.1.73"
+            sh "jx step git credentials"
+            // so we can retrieve the version in later steps
+            sh "echo \$(jx-release-version) > VERSION"
+            // TODO
+            //sh "mvn versions:set -DnewVersion=\$(cat VERSION)"
+          }
+          dir ('./charts/hybris-version-download') {
+            container('gradle') {
+              sh "make tag"
+            }
+          }
+          container('gradle') {
+            sh 'gradle clean build'
+
+            sh 'export VERSION=`cat VERSION` && skaffold run -f skaffold.yaml'
+            sh "jx step validate --min-jx-version 1.2.36"
+            sh "jx step post build --image \$JENKINS_X_DOCKER_REGISTRY_SERVICE_HOST:\$JENKINS_X_DOCKER_REGISTRY_SERVICE_PORT/$ORG/$APP_NAME:\$(cat VERSION)"
+          }
+        }
+      }
+      stage('Promote to Environments') {
+        when {
+          branch 'master'
+        }
+        steps {
+          dir ('./charts/hybris-version-download') {
+            container('gradle') {
+              sh 'jx step changelog --version v\$(cat ../../VERSION)'
+
+              // release the helm chart
+              sh 'make release'
+
+              // promote through all 'Auto' promotion Environments
+              sh 'jx promote -b --all-auto --timeout 1h --version \$(cat ../../VERSION)'
+            }
           }
         }
       }
     }
     post {
-      always {
-          cleanWs()
-      }
+        always {
+            cleanWs()
+        }
     }
-}
+  }
