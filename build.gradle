@@ -1,0 +1,48 @@
+buildscript {
+    repositories {
+        flatDir {
+            dirs 'buildLibs'
+        }
+    }
+    dependencies {
+        classpath 'com.hybris:hybris-gradle-plugin:1.0-SNAPSHOT'
+    }
+}
+apply plugin: 'com.hybris.yps.build'
+apply plugin: 'maven-publish'
+
+
+task downloadCommerce(type: com.hybris.yps.build.tasks.SupportPortalDownload) {
+    description "Download hybrisplatform zip file from SAP Support Portal"
+    //URL to support portal file (as stated in wiki.hybris.com)
+    supportPortalUrl = downloadUrl
+    //S/I/D User
+    username = supportUser
+    password = supportPassword
+    //download target
+    targetFile = file("hybris-commerce-suite-${hybrisVersion}.zip")
+    //expected md5 hash (Available in support portal, Related Info -> Content Info)
+    md5Hash = expectedHash
+}
+
+publishing {
+    repositories {
+        maven {
+            url nexusURL
+            credentials(PasswordCredentials) {
+                username nexusUser
+                password nexusPassword
+            }
+        }
+    }
+  publications {
+    maven(MavenPublication) {
+        artifact("hybris-commerce-suite-${hybrisVersion}.zip") {
+            groupId 'de.hybris.platform'
+            artifactId 'hybris-commerce-suite'
+            version hybrisVersion
+            extension "zip"
+      }
+    }
+  }
+}
