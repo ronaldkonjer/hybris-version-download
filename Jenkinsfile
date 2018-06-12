@@ -4,11 +4,11 @@ pipeline {
     }
     parameters {
         string(name: 'VERSION', defaultValue: '6.7.0.1', description: 'Which platform version is this?')
-        string(name: 'DOWNLOADURL', defaultValue: 'NONE', description: 'Which platform version is this?')
+        string(name: 'DOWNLOADURL', defaultValue: 'NONE', description: 'Support Portal URL (from hybris wiki)')
         string(name: 'HASH', defaultValue: 'NONE', description: 'expected md5 hash (Available in support portal, Related Info -> Content Info)')
     }
     environment {
-        SUSER       = credentials('support-portal-user')
+        SUSER = credentials('support-portal-user')
         NEXUS = credentials('nexus')
     }
     stages {
